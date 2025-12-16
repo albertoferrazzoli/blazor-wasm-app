@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<Rules>
+  <Rule name="rule1" feature="renaming" exclude="false">
+    <Target>Classes</Target>
+    <Pattern isRegEx="true">.*Pages|.*Shared</Pattern>
+  </Rule>
+</Rules>
