@@ -1,0 +1,453 @@
+@page "/orders"
+@using blazor_wasm_app.Models
+@using blazor_wasm_app.Services
+@inject IOrderRepository OrderRepository
+@inject IReflectionService ReflectionService
+@inject AppStateService AppState
+
+<PageTitle>Orders</PageTitle>
+
+<h1>Orders Management</h1>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <h5 class="card-title">Total Orders</h5>
+                <h2>@totalOrders</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <h5 class="card-title">Total Revenue</h5>
+                <h2>@totalRevenue.ToString("C")</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning">
+            <div class="card-body">
+                <h5 class="card-title">Pending</h5>
+                <h2>@pendingCount</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body">
+                <h5 class="card-title">Processing</h5>
+                <h2>@processingCount</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-4">
+        <select class="form-select" @bind="selectedStatus" @bind:after="LoadOrders">
+            <option value="">All Statuses</option>
+            @foreach (var status in Enum.GetValues<OrderStatus>())
+            {
+                <option value="@status">@status</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-4">
+        <input type="email" class="form-control" placeholder="Filter by email..."
+               @bind="emailFilter" @bind:after="LoadOrders" />
+    </div>
+    <div class="col-md-4">
+        <button class="btn btn-primary" @onclick="CreateNewOrder">New Order</button>
+    </div>
+</div>
+
+@if (orders == null)
+{
+    <p><em>Loading...</em></p>
+}
+else if (!orders.Any())
+{
+    <div class="alert alert-info">No orders found.</div>
+}
+else
+{
+    <div class="accordion" id="ordersAccordion">
+        @foreach (var order in orders)
+        {
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button @(expandedOrderId == order.Id ? "" : "collapsed")"
+                            type="button" @onclick="() => ToggleOrder(order.Id)">
+                        <div class="d-flex justify-content-between w-100 me-3">
+                            <span>
+                                <strong>Order #@order.Id</strong> - @order.CustomerName
+                            </span>
+                            <span>
+                                <span class="badge @GetStatusBadgeClass(order.Status)">@order.Status</span>
+                                <span class="ms-2">@order.TotalAmount.ToString("C")</span>
+                            </span>
+                        </div>
+                    </button>
+                </h2>
+                <div class="accordion-collapse collapse @(expandedOrderId == order.Id ? "show" : "")">
+                    <div class="accordion-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Customer Info</h6>
+                                <p>
+                                    <strong>Email:</strong> @order.CustomerEmail<br />
+                                    <strong>Created:</strong> @order.CreatedAt.ToString("g")<br />
+                                    @if (order.ShippedAt.HasValue)
+                                    {
+                                        <strong>Shipped:</strong> @order.ShippedAt.Value.ToString("g")
+                                    }
+                                </p>
+
+                                @if (order.ShippingAddress != null)
+                                {
+                                    <h6>Shipping Address</h6>
+                                    <p>
+                                        @order.ShippingAddress.Street<br />
+                                        @order.ShippingAddress.City, @order.ShippingAddress.PostalCode<br />
+                                        @order.ShippingAddress.Country
+                                    </p>
+                                }
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Order Items</h6>
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Product</th>
+                                            <th>Qty</th>
+                                            <th>Price</th>
+                                            <th>Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var item in order.Items)
+                                        {
+                                            <tr>
+                                                <td>@item.ProductName</td>
+                                                <td>@item.Quantity</td>
+                                                <td>@item.UnitPrice.ToString("C")</td>
+                                                <td>@item.TotalPrice.ToString("C")</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <th colspan="3">Total</th>
+                                            <th>@order.TotalAmount.ToString("C")</th>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <h6>Update Status</h6>
+                            <div class="btn-group">
+                                @foreach (var status in Enum.GetValues<OrderStatus>())
+                                {
+                                    <button class="btn btn-sm @(order.Status == status ? "btn-primary" : "btn-outline-primary")"
+                                            @onclick="() => UpdateOrderStatus(order, status)"
+                                            disabled="@(order.Status == status)">
+                                        @status
+                                    </button>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <button class="btn btn-outline-info btn-sm" @onclick="() => ShowOrderReflection(order)">
+                                View Reflection Data
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" @onclick="() => DeleteOrder(order)">
+                                Delete Order
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (showNewOrderModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create New Order</h5>
+                    <button type="button" class="btn-close" @onclick="() => showNewOrderModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <EditForm Model="newOrder" OnValidSubmit="SaveNewOrder">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-danger" />
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Customer Name</label>
+                                <InputText class="form-control" @bind-Value="newOrder.CustomerName" />
+                                <ValidationMessage For="@(() => newOrder.CustomerName)" class="text-danger" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Customer Email</label>
+                                <InputText class="form-control" @bind-Value="newOrder.CustomerEmail" />
+                                <ValidationMessage For="@(() => newOrder.CustomerEmail)" class="text-danger" />
+                            </div>
+                        </div>
+
+                        <h6>Shipping Address</h6>
+                        <div class="row">
+                            <div class="col-md-12 mb-3">
+                                <label class="form-label">Street</label>
+                                <InputText class="form-control" @bind-Value="newAddress.Street" />
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">City</label>
+                                <InputText class="form-control" @bind-Value="newAddress.City" />
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Postal Code</label>
+                                <InputText class="form-control" @bind-Value="newAddress.PostalCode" />
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Country</label>
+                                <InputText class="form-control" @bind-Value="newAddress.Country" />
+                            </div>
+                        </div>
+
+                        <h6>Order Items</h6>
+                        @for (int i = 0; i < newOrderItems.Count; i++)
+                        {
+                            var index = i;
+                            <div class="row mb-2">
+                                <div class="col-md-5">
+                                    <input type="text" class="form-control" placeholder="Product name"
+                                           @bind="newOrderItems[index].ProductName" />
+                                </div>
+                                <div class="col-md-2">
+                                    <input type="number" class="form-control" placeholder="Qty"
+                                           @bind="newOrderItems[index].Quantity" />
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="number" class="form-control" placeholder="Price" step="0.01"
+                                           @bind="newOrderItems[index].UnitPrice" />
+                                </div>
+                                <div class="col-md-2">
+                                    <button type="button" class="btn btn-outline-danger"
+                                            @onclick="() => RemoveOrderItem(index)">X</button>
+                                </div>
+                            </div>
+                        }
+                        <button type="button" class="btn btn-outline-secondary btn-sm mb-3" @onclick="AddOrderItem">
+                            + Add Item
+                        </button>
+
+                        <div class="modal-footer px-0 pb-0">
+                            <button type="button" class="btn btn-secondary" @onclick="() => showNewOrderModal = false">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Create Order</button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showReflectionModal && selectedOrder != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Order #@selectedOrder.Id - Reflection Data</h5>
+                    <button type="button" class="btn-close" @onclick="() => showReflectionModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <h6>Entity Properties (via Reflection)</h6>
+                    <table class="table table-sm">
+                        @foreach (var prop in orderProperties)
+                        {
+                            <tr>
+                                <th style="width: 200px">@prop.Key</th>
+                                <td><code>@(prop.Value?.ToString() ?? "null")</code></td>
+                            </tr>
+                        }
+                    </table>
+
+                    <h6>Property Metadata</h6>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Nullable</th>
+                                <th>Attributes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var meta in ReflectionService.GetPropertyMetadata<Order>())
+                            {
+                                <tr>
+                                    <td>@meta.Name</td>
+                                    <td><code>@meta.TypeName</code></td>
+                                    <td>@(meta.IsNullable ? "Yes" : "No")</td>
+                                    <td>
+                                        @foreach (var attr in meta.Attributes)
+                                        {
+                                            <span class="badge bg-info me-1">@attr</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="() => showReflectionModal = false">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private IEnumerable<Order>? orders;
+    private Order? selectedOrder;
+    private Dictionary<string, object?> orderProperties = new();
+
+    private int? expandedOrderId;
+    private string? selectedStatus;
+    private string emailFilter = "";
+
+    private int totalOrders;
+    private decimal totalRevenue;
+    private int pendingCount;
+    private int processingCount;
+
+    private bool showNewOrderModal = false;
+    private bool showReflectionModal = false;
+    private Order newOrder = new();
+    private Address newAddress = new();
+    private List<OrderItem> newOrderItems = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        AppState.Subscribe(StateHasChanged);
+        await LoadOrders();
+        await LoadStats();
+    }
+
+    private async Task LoadOrders()
+    {
+        IEnumerable<Order> result;
+
+        if (!string.IsNullOrWhiteSpace(selectedStatus) && Enum.TryParse<OrderStatus>(selectedStatus, out var status))
+        {
+            result = await OrderRepository.GetByStatusAsync(status);
+        }
+        else if (!string.IsNullOrWhiteSpace(emailFilter))
+        {
+            result = await OrderRepository.GetByCustomerEmailAsync(emailFilter);
+        }
+        else
+        {
+            result = await OrderRepository.GetAllAsync();
+        }
+
+        orders = result.OrderByDescending(o => o.CreatedAt);
+    }
+
+    private async Task LoadStats()
+    {
+        var all = await OrderRepository.GetAllAsync();
+        totalOrders = all.Count();
+        totalRevenue = await OrderRepository.GetTotalRevenueAsync();
+        pendingCount = (await OrderRepository.GetByStatusAsync(OrderStatus.Pending)).Count();
+        processingCount = (await OrderRepository.GetByStatusAsync(OrderStatus.Processing)).Count();
+    }
+
+    private void ToggleOrder(int orderId)
+    {
+        expandedOrderId = expandedOrderId == orderId ? null : orderId;
+    }
+
+    private string GetStatusBadgeClass(OrderStatus status) => status switch
+    {
+        OrderStatus.Pending => "bg-warning text-dark",
+        OrderStatus.Confirmed => "bg-info",
+        OrderStatus.Processing => "bg-primary",
+        OrderStatus.Shipped => "bg-secondary",
+        OrderStatus.Delivered => "bg-success",
+        OrderStatus.Cancelled => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private async Task UpdateOrderStatus(Order order, OrderStatus newStatus)
+    {
+        order.Status = newStatus;
+        if (newStatus == OrderStatus.Shipped)
+        {
+            order.ShippedAt = DateTime.UtcNow;
+        }
+        await OrderRepository.UpdateAsync(order);
+        await LoadStats();
+        AppState.AddNotification($"Order #{order.Id} status updated to {newStatus}");
+    }
+
+    private void ShowOrderReflection(Order order)
+    {
+        selectedOrder = order;
+        orderProperties = ReflectionService.GetEntityProperties(order);
+        showReflectionModal = true;
+    }
+
+    private async Task DeleteOrder(Order order)
+    {
+        await OrderRepository.DeleteAsync(order.Id);
+        await LoadOrders();
+        await LoadStats();
+        AppState.AddNotification($"Order #{order.Id} deleted");
+    }
+
+    private void CreateNewOrder()
+    {
+        newOrder = new Order();
+        newAddress = new Address { Country = "Italy" };
+        newOrderItems = new List<OrderItem> { new OrderItem { ProductId = Guid.NewGuid(), Quantity = 1 } };
+        showNewOrderModal = true;
+    }
+
+    private void AddOrderItem()
+    {
+        newOrderItems.Add(new OrderItem { ProductId = Guid.NewGuid(), Quantity = 1 });
+    }
+
+    private void RemoveOrderItem(int index)
+    {
+        if (newOrderItems.Count > 1)
+        {
+            newOrderItems.RemoveAt(index);
+        }
+    }
+
+    private async Task SaveNewOrder()
+    {
+        newOrder.ShippingAddress = newAddress;
+        newOrder.Items = newOrderItems.Where(i => !string.IsNullOrWhiteSpace(i.ProductName)).ToList();
+        await OrderRepository.AddAsync(newOrder);
+        showNewOrderModal = false;
+        await LoadOrders();
+        await LoadStats();
+        AppState.AddNotification($"New order created for {newOrder.CustomerName}");
+    }
+}

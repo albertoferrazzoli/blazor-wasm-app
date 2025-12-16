@@ -1,0 +1,385 @@
+@page "/products"
+@using blazor_wasm_app.Models
+@using blazor_wasm_app.Services
+@inject IProductRepository ProductRepository
+@inject IDynamicQueryService QueryService
+@inject IReflectionService ReflectionService
+
+<PageTitle>Products</PageTitle>
+
+<h1>Products Management</h1>
+
+<div class="row mb-3">
+    <div class="col-md-4">
+        <input type="text" class="form-control" placeholder="Search products..."
+               @bind="searchTerm" @bind:event="oninput" @onkeyup="OnSearchChanged" />
+    </div>
+    <div class="col-md-3">
+        <select class="form-select" @bind="selectedCategory" @bind:after="ApplyFilters">
+            <option value="">All Categories</option>
+            @foreach (var category in Enum.GetValues<ProductCategory>())
+            {
+                <option value="@category">@category</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <button class="btn btn-primary" @onclick="ShowAddModal">Add Product</button>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="spinner-border" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+}
+else if (products == null || !products.Any())
+{
+    <div class="alert alert-info">No products found.</div>
+}
+else
+{
+    <table class="table table-striped table-hover">
+        <thead>
+            <tr>
+                <th @onclick="() => SortBy(nameof(Product.Name))" style="cursor: pointer">
+                    Name @GetSortIcon(nameof(Product.Name))
+                </th>
+                <th @onclick="() => SortBy(nameof(Product.Category))" style="cursor: pointer">
+                    Category @GetSortIcon(nameof(Product.Category))
+                </th>
+                <th @onclick="() => SortBy(nameof(Product.Price))" style="cursor: pointer">
+                    Price @GetSortIcon(nameof(Product.Price))
+                </th>
+                <th>Stock</th>
+                <th>Tags</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var product in products)
+            {
+                <tr>
+                    <td>@product.Name</td>
+                    <td><span class="badge bg-secondary">@product.Category</span></td>
+                    <td>@product.Price.ToString("C")</td>
+                    <td>
+                        <span class="badge @(product.StockQuantity > 10 ? "bg-success" : product.StockQuantity > 0 ? "bg-warning" : "bg-danger")">
+                            @product.StockQuantity
+                        </span>
+                    </td>
+                    <td>
+                        @foreach (var tag in product.Tags.Take(3))
+                        {
+                            <span class="badge bg-info me-1">@tag</span>
+                        }
+                        @if (product.Tags.Count > 3)
+                        {
+                            <span class="badge bg-light text-dark">+@(product.Tags.Count - 3)</span>
+                        }
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" @onclick="() => ShowEditModal(product)">Edit</button>
+                        <button class="btn btn-sm btn-outline-info" @onclick="() => ShowDetails(product)">Details</button>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => DeleteProduct(product)">Delete</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <div class="d-flex justify-content-between align-items-center">
+        <span>Showing @products.Count() of @totalCount products</span>
+        <nav>
+            <ul class="pagination mb-0">
+                <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => ChangePage(currentPage - 1)">Previous</button>
+                </li>
+                @for (int i = 1; i <= totalPages; i++)
+                {
+                    var pageNum = i;
+                    <li class="page-item @(currentPage == pageNum ? "active" : "")">
+                        <button class="page-link" @onclick="() => ChangePage(pageNum)">@pageNum</button>
+                    </li>
+                }
+                <li class="page-item @(currentPage == totalPages ? "disabled" : "")">
+                    <button class="page-link" @onclick="() => ChangePage(currentPage + 1)">Next</button>
+                </li>
+            </ul>
+        </nav>
+    </div>
+}
+
+@if (showModal)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(isEditing ? "Edit Product" : "Add Product")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseModal"></button>
+                </div>
+                <div class="modal-body">
+                    <EditForm Model="editingProduct" OnValidSubmit="SaveProduct">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-danger" />
+
+                        <div class="mb-3">
+                            <label class="form-label">Name</label>
+                            <InputText class="form-control" @bind-Value="editingProduct.Name" />
+                            <ValidationMessage For="@(() => editingProduct.Name)" class="text-danger" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Description</label>
+                            <InputTextArea class="form-control" @bind-Value="editingProduct.Description" rows="3" />
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Price</label>
+                                <InputNumber class="form-control" @bind-Value="editingProduct.Price" />
+                                <ValidationMessage For="@(() => editingProduct.Price)" class="text-danger" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Category</label>
+                                <InputSelect class="form-select" @bind-Value="editingProduct.Category">
+                                    @foreach (var category in Enum.GetValues<ProductCategory>())
+                                    {
+                                        <option value="@category">@category</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Stock Quantity</label>
+                                <InputNumber class="form-control" @bind-Value="editingProduct.StockQuantity" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Active</label>
+                                <div class="form-check">
+                                    <InputCheckbox class="form-check-input" @bind-Value="editingProduct.IsActive" />
+                                    <label class="form-check-label">Product is active</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Tags (comma separated)</label>
+                            <input type="text" class="form-control" @bind="tagsInput" />
+                        </div>
+
+                        <div class="modal-footer px-0 pb-0">
+                            <button type="button" class="btn btn-secondary" @onclick="CloseModal">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showDetailsModal && selectedProduct != null)
+{
+    <div class="modal show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Product Details</h5>
+                    <button type="button" class="btn-close" @onclick="() => showDetailsModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <h4>@selectedProduct.Name</h4>
+                    <p class="text-muted">@selectedProduct.Description</p>
+
+                    <h6>Properties (via Reflection):</h6>
+                    <table class="table table-sm">
+                        @foreach (var prop in productProperties)
+                        {
+                            <tr>
+                                <th>@prop.Key</th>
+                                <td>@(prop.Value?.ToString() ?? "null")</td>
+                            </tr>
+                        }
+                    </table>
+
+                    <h6>Metadata:</h6>
+                    @foreach (var meta in ReflectionService.GetPropertyMetadata<Product>())
+                    {
+                        <span class="badge bg-secondary me-1">@meta.Name: @meta.TypeName</span>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="() => showDetailsModal = false">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private IEnumerable<Product>? products;
+    private Product editingProduct = new();
+    private Product? selectedProduct;
+    private Dictionary<string, object?> productProperties = new();
+
+    private bool isLoading = true;
+    private bool showModal = false;
+    private bool showDetailsModal = false;
+    private bool isEditing = false;
+
+    private string searchTerm = "";
+    private string? selectedCategory;
+    private string sortColumn = nameof(Product.Name);
+    private bool sortDescending = false;
+    private string tagsInput = "";
+
+    private int currentPage = 1;
+    private int pageSize = 5;
+    private int totalCount = 0;
+    private int totalPages => (int)Math.Ceiling(totalCount / (double)pageSize);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProducts();
+    }
+
+    private async Task LoadProducts()
+    {
+        isLoading = true;
+        try
+        {
+            var allProducts = await ProductRepository.GetAllAsync();
+            totalCount = allProducts.Count();
+
+            var query = allProducts;
+
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                query = await ProductRepository.SearchAsync(searchTerm);
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedCategory) && Enum.TryParse<ProductCategory>(selectedCategory, out var category))
+            {
+                query = query.Where(p => p.Category == category);
+            }
+
+            query = QueryService.ApplySort(query, sortColumn, sortDescending);
+            products = QueryService.ApplyPaging(query, currentPage, pageSize);
+            totalCount = query.Count();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnSearchChanged()
+    {
+        currentPage = 1;
+        await LoadProducts();
+    }
+
+    private async Task ApplyFilters()
+    {
+        currentPage = 1;
+        await LoadProducts();
+    }
+
+    private async Task SortBy(string column)
+    {
+        if (sortColumn == column)
+        {
+            sortDescending = !sortDescending;
+        }
+        else
+        {
+            sortColumn = column;
+            sortDescending = false;
+        }
+        await LoadProducts();
+    }
+
+    private string GetSortIcon(string column)
+    {
+        if (sortColumn != column) return "";
+        return sortDescending ? "▼" : "▲";
+    }
+
+    private async Task ChangePage(int page)
+    {
+        if (page < 1 || page > totalPages) return;
+        currentPage = page;
+        await LoadProducts();
+    }
+
+    private void ShowAddModal()
+    {
+        editingProduct = new Product { Id = Guid.NewGuid() };
+        tagsInput = "";
+        isEditing = false;
+        showModal = true;
+    }
+
+    private void ShowEditModal(Product product)
+    {
+        editingProduct = new Product
+        {
+            Id = product.Id,
+            Name = product.Name,
+            Description = product.Description,
+            Price = product.Price,
+            Category = product.Category,
+            StockQuantity = product.StockQuantity,
+            IsActive = product.IsActive,
+            Tags = new List<string>(product.Tags)
+        };
+        tagsInput = string.Join(", ", product.Tags);
+        isEditing = true;
+        showModal = true;
+    }
+
+    private void ShowDetails(Product product)
+    {
+        selectedProduct = product;
+        productProperties = ReflectionService.GetEntityProperties(product);
+        showDetailsModal = true;
+    }
+
+    private void CloseModal()
+    {
+        showModal = false;
+        editingProduct = new();
+    }
+
+    private async Task SaveProduct()
+    {
+        editingProduct.Tags = tagsInput
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => t.Trim())
+            .Where(t => !string.IsNullOrEmpty(t))
+            .ToList();
+
+        if (isEditing)
+        {
+            await ProductRepository.UpdateAsync(editingProduct);
+        }
+        else
+        {
+            await ProductRepository.AddAsync(editingProduct);
+        }
+
+        CloseModal();
+        await LoadProducts();
+    }
+
+    private async Task DeleteProduct(Product product)
+    {
+        await ProductRepository.DeleteAsync(product.Id);
+        await LoadProducts();
+    }
+}
